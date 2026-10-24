@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en-IE">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3d6b66">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Care">
+  <title>Care</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css?v=1">
+  <script src="config.js?v=1"></script>
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Care</h1>
+      <div class="sub" id="today"></div>
+    </div>
+    <button class="ghost" id="account" aria-label="Settings"></button>
+  </header>
+  <main id="view" aria-live="polite"><p class="empty">Loading…</p></main>
+  <nav class="tabs" role="tablist">
+    <button data-tab="now" role="tab"><span class="ico" aria-hidden="true">◎</span>Now</button>
+    <button data-tab="all" role="tab"><span class="ico" aria-hidden="true">☰</span>All</button>
+  </nav>
+  <div id="toast" class="toast" hidden></div>
+  <dialog id="item-sheet" class="sheet tall" aria-label="Item"></dialog>
+  <dialog id="edit-sheet" class="sheet tall" aria-label="Edit item"></dialog>
+  <dialog id="settings" class="sheet tall" aria-label="Settings"></dialog>
+  <script type="module" src="src/app.js?v=1"></script>
+</body>
+</html>
