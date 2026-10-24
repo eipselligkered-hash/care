@@ -1,5 +1,5 @@
-import { status, nowView, groupAll, fmtDate, whenText, CADENCES, CADENCE_LABEL, SOON_DAYS } from './due.js?v=1';
-import { makeBackend } from './data.js?v=1';
+import { status, fmtDate, whenText, CADENCES, CADENCE_LABEL, CADENCE_CHIP, SOON_DAYS, nowByCategory, allByCategory, dueChip, catOf, categoryOrder, CAT_OTHER } from './due.js?v=2';
+import { makeBackend } from './data.js?v=2';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -81,43 +81,41 @@ function toast(msg, undo) {
 }
 
 // ---------- rendering
-const chip = (r) => (r.state === 'due' ? '<span class="chip c-due">Due</span>' : r.state === 'optional' || (r.optional && r.state !== 'reference') ? '<span class="chip c-opt">Optional</span>'
-  : r.state === 'soon' ? '<span class="chip c-soon">Soon</span>' : r.state === 'done' ? '<span class="chip c-done">Done</span>' : '');
+const chipHtml = (c) => (c ? `<span class="chip c-${c.cls}">${esc(c.text)}</span>` : '');
+const cadChip = (it) => (it.cadence !== 'after_use' ? `<span class="chip c-cad">${esc(CADENCE_CHIP[it.cadence])}</span>` : '');
+const chip = (r) => chipHtml(dueChip(r));
 function row(r, { tick = true } = {}) {
   const canTick = tick && !['done', 'reference', 'inactive'].includes(r.state);
   return `<div class="item ${r.state === 'done' || r.state === 'inactive' ? 'muted-row' : ''}" data-id="${esc(r.item.id)}">
     ${canTick ? `<button class="tick" data-act="done" aria-label="Done today: ${esc(r.item.title)}">✓</button>` : ''}
     <div class="body" role="button" tabindex="0"><div class="name">${esc(r.item.title)}</div>
-      <div class="meta">${chip(r)}<span>${esc(whenText(r))}</span>${r.item.cadence !== 'once' && state.tab === 'now' ? `<span>${esc(CADENCE_LABEL[r.item.cadence])}</span>` : ''}</div></div></div>`;
+      <div class="meta">${chip(r)}${cadChip(r.item)}</div></div></div>`;
 }
 const list = (rows, o) => `<div class="list">${rows.map((r) => row(r, o)).join('')}</div>`;
-const folds = new Set((() => { try { return JSON.parse(localStorage.getItem('care.open') || '[]'); } catch { return []; } })());
-const fold = (key, title, note, body) => `<details class="fold" data-fold="${key}" ${folds.has(key) ? 'open' : ''}><summary><span>${title}</span><small>${note}</small></summary>${body}</details>`;
+const refList = (rows) => `<div class="ref"><ul>${rows.map((r) =>
+  `<li data-id="${esc(r.item.id)}" role="button" tabindex="0"><b>${esc(r.item.title)}</b>${r.item.details ? `<span>${esc(r.item.details)}</span>` : ''}</li>`).join('')}</ul></div>`;
+// open/closed state of every fold is remembered on this device (categories default open, the rest closed)
+const foldState = (() => { try { return JSON.parse(localStorage.getItem('care.folds') || '{}'); } catch { return {}; } })();
+const fold = (key, title, note, body, { open = false, cls = '' } = {}) =>
+  `<details class="fold ${cls}" data-fold="${esc(key)}" ${(foldState[key] ?? open) ? 'open' : ''}><summary><span>${esc(title)}</span><small>${esc(note)}</small></summary>${body}</details>`;
 
 function renderNow() {
-  const v = nowView(state.db.items, state.db.completions, localToday());
-  let h = `<h2 class="sec">Due <small>${v.due.length || ''}</small></h2>`;
-  h += v.due.length ? list(v.due) : `<p class="calm">Nothing due. All good.</p>`;
-  h += `<h2 class="sec">Coming up <small>next ${SOON_DAYS} days</small></h2>`;
-  h += v.soon.length ? list(v.soon) : `<p class="calm">Nothing in the next ${SOON_DAYS} days.</p>`;
-  if (v.optional.length) h += fold('optional', 'Optional', `${v.optional.length} · only if it applies`, list(v.optional));
+  const v = nowByCategory(state.db.items, state.db.completions, localToday());
+  let h = `<p class="summary-line">${v.due ? `${v.due} due` : 'Nothing due'}${v.soon ? ` · ${v.soon} in the next ${SOON_DAYS} days` : ''}</p>`;
+  if (!v.cats.length) h += `<p class="calm">Nothing due or coming up. All good.</p>`;
+  for (const c of v.cats) h += fold(`now:${c.category}`, c.category, String(c.rows.length), list(c.rows), { open: true, cls: 'cat' });
+  if (v.optional.length) h += fold('now:optional', 'Optional', `${v.optional.length} · only if it applies`, list(v.optional), { cls: 'cat quiet' });
   return h;
 }
 function renderAll() {
-  const today = localToday(), g = groupAll(state.db.items, state.db.completions, today);
+  const g = allByCategory(state.db.items, state.db.completions, localToday());
   let h = `<div class="toolbar"><button class="ghost" data-add>+ Add item</button></div>`;
-  for (const grp of g.groups) {
-    if (grp.cadence === 'after_use') {
-      if (!grp.rows.length) continue;
-      h += `<h2 class="sec">After each use <small>reference</small></h2><div class="ref"><ul>${grp.rows.map((r) =>
-        `<li data-id="${esc(r.item.id)}" role="button" tabindex="0"><b>${esc(r.item.title)}</b>${r.item.details ? `<span>${esc(r.item.details)}</span>` : ''}</li>`).join('')}</ul></div>`;
-      continue;
-    }
-    if (!grp.rows.length) continue;
-    const allOpt = grp.rows.every((r) => r.optional);
-    h += `<h2 class="sec">${esc(grp.label)} <small>${allOpt ? 'optional' : grp.rows.length}</small></h2>` + list(grp.rows);
+  for (const c of g.cats) {
+    const body = c.cadences.map((k) => `<h3 class="cad">${esc(k.label)}${k.cadence === 'after_use' ? ' <small>notes</small>' : k.rows.every((r) => r.optional) ? ' <small>optional</small>' : ''}</h3>`
+      + (k.cadence === 'after_use' ? refList(k.rows) : list(k.rows))).join('');
+    h += fold(`all:${c.category}`, c.category, String(c.count), body, { open: true, cls: 'cat' });
   }
-  if (g.inactive.length) h += fold('archived', 'Archived', String(g.inactive.length), list(g.inactive, { tick: false }));
+  if (g.inactive.length) h += fold('all:archived', 'Archived', String(g.inactive.length), list(g.inactive, { tick: false }), { cls: 'cat quiet' });
   if (!state.db.items.length) h += `<p class="empty">No items yet. Tap + Add item.</p>`;
   return h;
 }
@@ -126,8 +124,10 @@ function render() {
   $('#today').textContent = fmtDate(today, { long: true }) + (be.kind === 'mock' ? ' · local mock' : '') + (state.conn === 'updating' ? ' · updating…' : '');
   $('#account').textContent = '⚙';
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === state.tab));
+  const y = scrollY;
   $('#view').innerHTML = connBanner() + (state.tab === 'all' ? renderAll() : renderNow());
-  document.querySelectorAll('details.fold').forEach((d) => d.addEventListener('toggle', () => { d.open ? folds.add(d.dataset.fold) : folds.delete(d.dataset.fold); localStorage.setItem('care.open', JSON.stringify([...folds])); }));
+  document.querySelectorAll('#view details.fold').forEach((d) => d.addEventListener('toggle', () => { foldState[d.dataset.fold] = d.open; localStorage.setItem('care.folds', JSON.stringify(foldState)); }));
+  scrollTo(0, y);
 }
 
 // ---------- sign-in (email code, or the link in the same email)
@@ -158,7 +158,7 @@ function openItem(id) {
   const hist = state.db.completions.filter((c) => c.item_id === id).sort((a, b) => b.done_on.localeCompare(a.done_on)).slice(0, 5);
   const tickable = !['reference', 'inactive'].includes(r.state);
   d.innerHTML = `<div class="sheet-head"><h2>${esc(it.title)}</h2><button type="button" class="x" data-close aria-label="Close">✕</button></div>
-    <div class="big-meta">${chip(r)}<span>${esc(CADENCE_LABEL[it.cadence] || '')}</span>${r.state !== 'reference' ? `<span>${esc(whenText(r))}</span>` : ''}
+    <div class="big-meta">${chip(r)}<span class="chip c-cad">${esc(CADENCE_LABEL[it.cadence] || '')}</span><span class="chip c-cat">${esc(catOf(it))}</span>${!['reference', 'done'].includes(r.state) ? `<span>${esc(whenText(r))}</span>` : ''}
       ${it.cadence === 'once' && it.due_date ? `<span>Date ${fmtDate(it.due_date)}</span>` : ''}</div>
     ${it.details ? `<div class="howto">${linkify(it.details)}</div>` : ''}
     ${tickable ? `<div class="row-btns"><button type="button" class="primary" data-done-today>✓ Done today</button></div>
@@ -177,11 +177,18 @@ function openItem(id) {
 }
 
 // ---------- add / edit
+function catPicker(it) {
+  const cats = categoryOrder(state.db.items).filter((c) => c !== CAT_OTHER), cur = it.category?.trim() || '';
+  return `<label class="field">Category <select id="e-cat">${cats.map((c) => `<option value="${esc(c)}" ${c === cur ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+      <option value="" ${cur ? '' : 'selected'}>${CAT_OTHER} (none)</option><option value="__new">+ New category…</option></select></label>
+    <label class="field" id="e-cat-new-wrap">New category <input id="e-cat-new" maxlength="60"></label>`;
+}
 function openEdit(it) {
   const d = $('#edit-sheet'), isNew = !it; it ||= { title: '', details: '', cadence: 'monthly', optional: false, due_date: null, active: true };
   d.innerHTML = `<form id="edit-form" novalidate><div class="sheet-head"><h2>${isNew ? 'Add item' : 'Edit item'}</h2><button type="button" class="x" data-close aria-label="Close">✕</button></div>
     <label class="field">Title <input id="e-title" required maxlength="200" value="${esc(it.title)}"></label>
     <label class="field">Details <textarea id="e-details" rows="3">${esc(it.details || '')}</textarea></label>
+    ${catPicker(it)}
     <label class="field">How often <select id="e-cadence">${CADENCES.map((c) => `<option value="${c}" ${c === it.cadence ? 'selected' : ''}>${CADENCE_LABEL[c]}</option>`).join('')}</select></label>
     <label class="field" id="e-due-wrap">Date (one-off) <input type="date" id="e-due" value="${esc(it.due_date || '')}"></label>
     <label class="toggle"><input type="checkbox" id="e-opt" ${it.optional ? 'checked' : ''}> Optional (never shown as due)</label>
@@ -190,18 +197,26 @@ function openEdit(it) {
     <div class="row-btns"><button type="button" class="ghost" data-close>Cancel</button><button class="primary">Save</button></div></form>`;
   const cad = $('#e-cadence', d), dueWrap = $('#e-due-wrap', d);
   const sync = () => { dueWrap.hidden = cad.value !== 'once'; }; cad.onchange = sync; sync();
+  const cs = $('#e-cat', d), cn = $('#e-cat-new-wrap', d); cs.onchange = () => { cn.hidden = cs.value !== '__new'; if (!cn.hidden) $('#e-cat-new', d).focus(); }; cs.onchange();
   d.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => d.close()));
   $('#edit-form', d).onsubmit = async (e) => {
     e.preventDefault();
     const title = $('#e-title', d).value.trim(); if (!title) { $('#e-err', d).textContent = 'Give it a title.'; return; }
-    const patch = { title, details: $('#e-details', d).value.trim() || null, cadence: cad.value, optional: $('#e-opt', d).checked,
+    const catSel = $('#e-cat', d), category = catSel.value === '__new' ? $('#e-cat-new', d).value.trim() || null : catSel.value || null;
+    const patch = { category, title, details: $('#e-details', d).value.trim() || null, cadence: cad.value, optional: $('#e-opt', d).checked,
       due_date: cad.value === 'once' ? $('#e-due', d).value || null : null };
     if (!isNew) patch.active = $('#e-active', d).checked;
-    else patch.sort_order = Math.max(0, ...state.db.items.map((x) => x.sort_order || 0)) + 10;
     if (offlineNow()) { $('#e-err', d).textContent = errMsg(new Error('offline')); return; }
-    try { isNew ? await be.addItem(patch) : await be.updateItem(it.id, patch); }
+    // keep the category order stable: a new or moved item goes to the end of its category (a new category goes last)
+    if (isNew || catOf(it) !== catOf(patch)) {
+      const inCat = state.db.items.filter((x) => x.id !== it.id && catOf(x) === catOf(patch)).map((x) => x.sort_order || 0);
+      patch.sort_order = Math.max(0, ...(inCat.length ? inCat : state.db.items.map((x) => x.sort_order || 0))) + 10;
+    }
+    let res;
+    try { res = isNew ? await be.addItem(patch) : await be.updateItem(it.id, patch); }
     catch (err) { $('#e-err', d).textContent = errMsg(err); return; }
-    d.close(); await refresh().catch(() => {}); toast(isNew ? 'Added' : 'Saved');
+    d.close(); await refresh().catch(() => {});
+    toast(res?.categorySkipped ? 'Saved – the category needs the database update first' : isNew ? 'Added' : 'Saved');
   };
   d.showModal(); if (isNew) $('#e-title', d).focus();
 }

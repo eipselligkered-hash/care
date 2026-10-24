@@ -66,3 +66,45 @@ test('dates are dd/mm/yyyy', () => {
   assert.equal(whenText(status(it('o', 'once', { due_date: '2026-10-31' }), [], T)), 'In 7 days · Sat 31/10/2026');
   assert.equal(whenText(status(it('d', 'once', { due_date: '2026-10-01' }), [], T)), 'Since Thu 01/10/2026');
 });
+
+import { categoryOrder, catOf, nowByCategory, allByCategory, dueChip, CAT_OTHER } from '../src/due.js';
+
+test('categories: order from the data, Other last', () => {
+  const items = [it('a', 'monthly', { category: 'B', sort_order: 2010 }), it('b', 'monthly', { category: 'A', sort_order: 1050 }),
+    it('c', 'yearly', { sort_order: 5 }), it('d', 'once', { category: '  ', sort_order: 1 }), it('e', 'monthly', { category: 'B', sort_order: 30 })];
+  assert.deepEqual(categoryOrder(items), ['B', 'A', CAT_OTHER]);   // B's lowest sort_order (30) is below A's
+  assert.equal(catOf(items[3]), CAT_OTHER); assert.equal(catOf({}), CAT_OTHER);
+});
+
+test('Now by category: only categories with due/upcoming, due first then by date; optional apart', () => {
+  const items = [it('m', 'monthly', { category: 'A', sort_order: 10 }), it('o', 'once', { category: 'A', due_date: '2026-10-31', sort_order: 20 }),
+    it('p', 'quarterly', { category: 'A', optional: true, sort_order: 30 }), it('r', 'after_use', { category: 'B', sort_order: 40 }),
+    it('y', 'yearly', { category: 'C', sort_order: 50 }), it('old', 'once', { category: 'A', due_date: '2026-10-01', sort_order: 60 }),
+    it('z', 'monthly', { sort_order: 1 })];
+  const v = nowByCategory(items, [done('y', '2026-06-01')], T);
+  assert.deepEqual(v.cats.map((c) => c.category), ['A', CAT_OTHER]);           // B is reference only, C not due
+  assert.deepEqual(v.cats[0].rows.map((r) => r.item.id), ['old', 'm', 'o']);
+  assert.deepEqual(v.optional.map((r) => r.item.id), ['p']);
+  assert.equal(v.due, 3); assert.equal(v.soon, 1);
+});
+
+test('All by category: cadence order inside, archived apart', () => {
+  const items = [it('o', 'once', { category: 'A', sort_order: 1 }), it('y', 'yearly', { category: 'A', sort_order: 2 }),
+    it('q', 'quarterly', { category: 'A', optional: true, sort_order: 3 }), it('m', 'monthly', { category: 'A', sort_order: 4 }),
+    it('r', 'after_use', { category: 'A', sort_order: 5 }), it('x', 'monthly', { category: 'A', active: false, sort_order: 6 }),
+    it('n', 'monthly', { sort_order: 0 })];
+  const g = allByCategory(items, [], T);
+  assert.deepEqual(g.cats.map((c) => [c.category, c.count]), [['A', 5], [CAT_OTHER, 1]]);
+  assert.deepEqual(g.cats[0].cadences.map((c) => c.cadence), ['after_use', 'monthly', 'quarterly', 'yearly', 'once']);
+  assert.deepEqual(g.inactive.map((r) => r.item.id), ['x']);
+});
+
+test('quiet due chips', () => {
+  assert.deepEqual(dueChip(status(it('m', 'monthly'), [], T)), { cls: 'due', text: 'Due' });
+  assert.deepEqual(dueChip(status(it('d', 'once', { due_date: '2026-10-01' }), [], T)), { cls: 'due', text: 'Due' });
+  assert.deepEqual(dueChip(status(it('o', 'once', { due_date: '2026-10-31' }), [], T)), { cls: 'soon', text: 'Due 31/10' });
+  assert.deepEqual(dueChip(status(it('y', 'yearly'), [done('y', '2026-10-24')], T)), { cls: 'later', text: 'Next 24/10/2027' });
+  assert.deepEqual(dueChip(status(it('p', 'quarterly', { optional: true }), [], T)), { cls: 'opt', text: 'Optional' });
+  assert.deepEqual(dueChip(status(it('o', 'once'), [done('o', '2026-10-20')], T)), { cls: 'done', text: 'Done 20/10' });
+  assert.equal(dueChip(status(it('r', 'after_use'), [], T)), null);
+});

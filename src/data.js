@@ -56,8 +56,15 @@ export class SupabaseBackend {
   }
   async addCompletion(item_id, done_on, note = null) { return this.q(this.sb.from(DONE).insert({ owner_id: this.user?.id, item_id, done_on, note }).select().single()); }
   async removeCompletion(id) { await this.q(this.sb.from(DONE).delete().eq('id', id)); }
-  async addItem(item) { return this.q(this.sb.from(ITEMS).insert({ id: uid(), owner_id: this.user?.id, active: true, ...item }).select().single()); }
-  async updateItem(id, patch) { return this.q(this.sb.from(ITEMS).update(patch).eq('id', id).select().single()); }
+  // care_items.category arrives with a database update; until then save without it (and say so)
+  async withCategory(row, fn) {
+    try { return await this.q(fn(row)); } catch (err) {
+      if (!('category' in row) || !/category/.test(err.message || '') || !/column|schema cache/i.test(err.message || '')) throw err;
+      const { category, ...rest } = row; const res = await this.q(fn(rest)); return { ...res, categorySkipped: true };
+    }
+  }
+  async addItem(item) { return this.withCategory({ id: uid(), owner_id: this.user?.id, active: true, ...item }, (r) => this.sb.from(ITEMS).insert(r).select().single()); }
+  async updateItem(id, patch) { return this.withCategory(patch, (r) => this.sb.from(ITEMS).update(r).eq('id', id).select().single()); }
   onChange(cb) {
     const ch = this.sb.channel('care');
     [ITEMS, DONE].forEach((table) => ch.on('postgres_changes', { event: '*', schema: 'public', table }, () => cb()));
@@ -68,7 +75,7 @@ export class SupabaseBackend {
 function loadSupabase() {
   if (window.supabase?.createClient) return Promise.resolve(window.supabase);
   return new Promise((ok, ko) => {
-    const s = document.createElement('script'); s.src = new URL('../vendor/supabase.js?v=1', import.meta.url).href;
+    const s = document.createElement('script'); s.src = new URL('../vendor/supabase.js?v=2', import.meta.url).href;
     s.onload = () => (window.supabase?.createClient ? ok(window.supabase) : ko(new Error('supabase-js did not load')));
     s.onerror = () => ko(new Error('Could not load supabase-js (offline?)'));
     document.head.appendChild(s);

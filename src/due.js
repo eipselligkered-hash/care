@@ -84,3 +84,48 @@ export function whenText(r) {
   if (r.days === 1) return `${pre || ''}${pre ? fmtDate(r.next) : 'Tomorrow · ' + fmtDate(r.next)}`;
   return pre ? pre + fmtDate(r.next) : r.days <= SOON_DAYS ? `In ${r.days} days · ${fmtDate(r.next)}` : `Next ${fmtDate(r.next)}`;
 }
+
+// ---------- categories (names come from the data; display order = lowest sort_order in each category; no category = 'Other', last)
+export const CAT_OTHER = 'Other';
+export const catOf = (item) => (typeof item.category === 'string' && item.category.trim()) || CAT_OTHER;
+export function categoryOrder(items) {
+  const m = new Map();
+  for (const i of items) { const c = catOf(i), s = i.sort_order ?? 0; if (!m.has(c) || s < m.get(c)) m.set(c, s); }
+  return [...m.keys()].sort((a, b) => (a === CAT_OTHER) - (b === CAT_OTHER) || m.get(a) - m.get(b) || a.localeCompare(b));
+}
+export const ALL_CADENCE_ORDER = ['after_use', 'monthly', 'quarterly', 'yearly', 'once'];
+export const CADENCE_CHIP = { once: 'One-off', monthly: 'Monthly', quarterly: '3-monthly', yearly: 'Yearly', after_use: 'After use' };
+
+// Now: categories that have something due or coming up (due first, then by date); optional items kept apart
+export function nowByCategory(items, completions, today) {
+  const v = nowView(items, completions, today);
+  const rows = [...v.due, ...v.soon];
+  const cats = categoryOrder(items.filter((i) => i.active !== false))
+    .map((category) => ({ category, rows: rows.filter((r) => catOf(r.item) === category).sort(byNext) }))
+    .filter((g) => g.rows.length);
+  return { cats, optional: v.optional, due: v.due.length, soon: v.soon.length };
+}
+// All: category first, then cadence (after each use, monthly, every 3 months, yearly, one-offs); archived apart
+export function allByCategory(items, completions, today) {
+  const rows = items.map((i) => status(i, completions, today));
+  const order = (a, b) => (a.item.sort_order ?? 0) - (b.item.sort_order ?? 0) || a.item.title.localeCompare(b.item.title);
+  const live = rows.filter((r) => r.state !== 'inactive');
+  const cats = categoryOrder(live.map((r) => r.item)).map((category) => {
+    const mine = live.filter((r) => catOf(r.item) === category);
+    return { category, count: mine.length, cadences: ALL_CADENCE_ORDER.map((c) => ({ cadence: c, label: CADENCE_LABEL[c], rows: mine.filter((r) => r.item.cadence === c).sort(order) })).filter((g) => g.rows.length) };
+  });
+  return { cats, inactive: rows.filter((r) => r.state === 'inactive').sort(order) };
+}
+// one small, soft chip for the due state: 'Due', 'Due 31/10', 'Next 01/11/2027', 'Optional', 'Done 24/10'
+export const fmtShort = (day) => (day ? `${day.slice(8, 10)}/${day.slice(5, 7)}` : '');
+export function dueChip(r) {
+  switch (r.state) {
+    case 'due': return { cls: 'due', text: 'Due' };
+    case 'soon': return r.optional ? { cls: 'opt', text: `Optional · ${fmtShort(r.next)}` } : { cls: 'soon', text: `Due ${fmtShort(r.next)}` };
+    case 'later': return r.optional ? { cls: 'opt', text: `Optional · ${fmtDate(r.next, { weekday: false })}` } : { cls: 'later', text: `Next ${fmtDate(r.next, { weekday: false })}` };
+    case 'optional': return { cls: 'opt', text: 'Optional' };
+    case 'done': return { cls: 'done', text: `Done ${fmtShort(r.last)}` };
+    case 'inactive': return { cls: 'later', text: 'Archived' };
+    default: return null;
+  }
+}
